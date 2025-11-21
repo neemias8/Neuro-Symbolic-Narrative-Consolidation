@@ -175,6 +175,11 @@ class ChronologyParser:
         print(f"Processing chronology...")
         for event_node in tqdm(root.findall(".//event")):
             evt_id = event_node.get("id")
+            
+            # Extract description for metrics
+            desc_node = event_node.find("description")
+            description = desc_node.text.strip() if desc_node is not None and desc_node.text else ""
+
             event_texts = []
             for g_key in gospel_keys:
                 ref_node = event_node.find(g_key)
@@ -187,7 +192,7 @@ class ChronologyParser:
                     if gospel_text_block:
                         event_texts.append(" ".join(gospel_text_block))
             if event_texts:
-                events.append({"id": evt_id, "texts": event_texts})
+                events.append({"id": evt_id, "texts": event_texts, "description": description})
         return events
 
 # --- CONSOLIDATION MODELS ---
@@ -390,9 +395,8 @@ if __name__ == "__main__":
     events = chrono_parser.get_events()
     print(f"[SUCCESS] {len(events)} events extracted.")
 
-    # --- DEBUG: LIMIT TO 5 EVENTS ---
-    print("!!! DEBUG MODE: Running with only 5 events !!!")
-    events = events[:5]
+    # --- FULL RUN ---
+    # events = events[:5] # Uncomment for debug
     # --------------------------------
 
     golden_path = os.path.join(DATA_DIR, FILES_CONFIG["golden"])
