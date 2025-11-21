@@ -1,0 +1,42 @@
+# Core NLP and Deep Learning
+transformers>=4.41.2
+torch>=2.3.0,<3.0.0
+accelerate>=0.30.0
+sentencepiece>=0.2.0
+tokenizers>=0.22.0
+
+# Hugging Face Optimization
+hf_xet>=0.6.0
+huggingface-hub>=0.34.0
+safetensors>=0.4.3
+
+# TAEG Dependencies (Extractive Baseline)
+beautifulsoup4>=4.12.3
+lxml>=5.2.2
+lexrank>=0.1.0
+nltk>=3.8.1
+scipy>=1.13.1
+
+# Evaluation Metrics
+rouge-score>=0.1.2
+bert-score>=0.3.13
+sentence-transformers>=2.2.0
+scikit-learn>=1.3.0
+evaluate>=0.4.0
+
+# Utilities
+pandas>=2.2.2
+numpy>=1.26.4
+tqdm>=4.66.4
+pyyaml>=5.1
+requests>=2.31.0
+filelock>=3.0.0
+matplotlib>=3.9.0
+seaborn>=0.13.2
+
+# Testing
+pytest>=8.2.2
+
+# Optional: For fine-tuning and advanced features
+# datasets>=2.19.0
+# evaluate>=0.4.2
