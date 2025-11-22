@@ -14,5 +14,4 @@ pip-delete-this-directory.txt
 # VS Code
 .vscode/
 
-# Output (optional, but usually good to ignore generated files)
-output/
+
