@@ -1,8 +1,19 @@
 # Neuro-Symbolic Narrative Consolidation (WCCI 2026)
+This repository contains the experimental implementation for the paper submitted to WCCI 2026. It addresses the challenge of processing overlapping narrative documents—such as legal testimonies, historical chronicles, or the Gospels—where the goal is not merely to summarize, but to unify multiple perspectives into a single, coherent story.
 
-This repository contains the experimental implementation for the paper submitted to WCCI 2026. The project employs a Neuro-Symbolic approach to consolidate Biblical narratives, utilizing the **Temporal Alignment Event Graph (TAEG)** as a structural prior to guide multiple abstractive models.
+# Narrative Consolidation vs. Multi-Document Summarization (MDS)
+While standard **Multi-Document Summarization (MDS)** aims for compression (producing a concise text that captures the most salient information), this approach often fails when applied to complex narratives. By prioritizing brevity, standard MDS models frequently sacrifice chronological integrity and omit complementary details that are essential for a complete understanding of "what happened when."
 
-The core experiment compares the performance of Large Language Models (LLMs) and Sequence-to-Sequence models when guided by the TAEG structure versus a standard "Global Consolidation" (No TAEG) approach.
+**Narrative Consolidation**, formally defined in this work, shifts the objective from compression to **unification**. Its core goals are:
+
+1. **Chronological Integrity**: The narrative flow must be strictly preserved, preventing the "temporal hallucinations" common in Large Language Models.
+
+2. **Completeness**: The output should cover all events described across the sources, potentially resulting in a text longer than any single input document.
+
+3. **Fusion**: Complementary details from different sources (e.g., one witness describing the sound of a crash, another describing the color of the car) must be merged into a cohesive whole.
+
+To achieve this, this project employs a **Neuro-Symbolic** approach utilizing the **Temporal Alignment Event Graph (TAEG)** as a structural prior to guide multiple abstractive models.
+
 
 ## Supported Models
 

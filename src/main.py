@@ -10,8 +10,17 @@ import pandas as pd
 from typing import List, Dict, Tuple
 from tqdm import tqdm
 import evaluate
+import nltk
 from scipy.stats import kendalltau
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM
+
+# Ensure NLTK data is available
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
 
 # --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -271,7 +280,7 @@ class LocalGemmaConsolidator(ConsolidatorInterface):
             input_text += f"Source {i+1}: {t}\n"
 
         messages = [
-            {"role": "user", "content": f"Consolidate the following conflicting accounts into a single coherent narrative paragraph. Preserve chronological order and include all details:\n\n{input_text}"}
+            {"role": "user", "content": f"Consolidate the following conflicting accounts into a single coherent narrative paragraph. Preserve chronological order and include all details. Output ONLY the consolidated paragraph without any introductory text or conversational filler:\n\n{input_text}"}
         ]
         
         input_ids = self.tokenizer.apply_chat_template(
@@ -288,7 +297,16 @@ class LocalGemmaConsolidator(ConsolidatorInterface):
         )
         
         response = outputs[0][input_ids.shape[-1]:]
-        return self.tokenizer.decode(response, skip_special_tokens=True)
+        decoded_text = self.tokenizer.decode(response, skip_special_tokens=True).strip()
+        
+        # Post-processing to remove common conversational fillers
+        lines = decoded_text.split('\n')
+        filtered_lines = [
+            line for line in lines 
+            if not line.lower().startswith(("here is", "here's", "sure", "certainly", "okay"))
+            and not line.strip().endswith(":")
+        ]
+        return "\n".join(filtered_lines).strip()
 
 class GoogleGenAIConsolidator(ConsolidatorInterface):
     """ Handles Google Gemini via API """
@@ -331,6 +349,63 @@ def get_consolidator(config: Dict) -> ConsolidatorInterface:
     else:
         return HuggingFaceConsolidator(config['path'])
 
+def calculate_kendall_tau_ref(hypothesis, reference, event_data):
+    """
+    Calculates Kendall's Tau by comparing event order in Hypothesis vs Reference (Golden Sample).
+    Uses a 'First Match' heuristic with keyword overlap (first 3 words of description).
+    """
+    try:
+        # Split texts into sentences
+        ref_sentences = nltk.sent_tokenize(reference.lower())
+        hyp_sentences = nltk.sent_tokenize(hypothesis.lower())
+
+        if len(hyp_sentences) < 2:
+            return 0.0
+
+        # 1. Find events in Reference (Golden Sample) -> Expected Order
+        ref_event_positions = {}
+        for event in event_data:
+            event_id = event['id']
+            desc_lower = event.get('description', '').lower()
+            keywords = desc_lower.split()[:3] # Heuristic
+            if not keywords: continue
+            
+            for j, sentence in enumerate(ref_sentences):
+                if any(keyword in sentence for keyword in keywords):
+                    ref_event_positions[event_id] = j
+                    break
+
+        # 2. Find events in Hypothesis (Generated Text) -> Found Order
+        hyp_event_positions = {}
+        for event in event_data:
+            event_id = event['id']
+            desc_lower = event.get('description', '').lower()
+            keywords = desc_lower.split()[:3]
+            if not keywords: continue
+
+            for j, sentence in enumerate(hyp_sentences):
+                if any(keyword in sentence for keyword in keywords):
+                    hyp_event_positions[event_id] = j
+                    break
+
+        # 3. Intersection
+        common_events = set(ref_event_positions.keys()) & set(hyp_event_positions.keys())
+        
+        if len(common_events) < 2:
+            return 0.0
+
+        # 4. Calculate Tau
+        common_event_list = sorted(common_events)
+        expected_order = [ref_event_positions[eid] for eid in common_event_list]
+        found_order = [hyp_event_positions[eid] for eid in common_event_list]
+
+        tau, _ = kendalltau(expected_order, found_order)
+        return tau if not np.isnan(tau) else 0.0
+
+    except Exception as e:
+        print(f"Error in legacy tau: {e}")
+        return 0.0
+
 def evaluate_narrative(prediction: str, reference: str, events_for_tau: List[Dict] = None) -> Dict[str, float]:
     """
     Computes ROUGE, METEOR, BERTScore, and optionally Kendall's Tau.
@@ -363,27 +438,43 @@ def evaluate_narrative(prediction: str, reference: str, events_for_tau: List[Dic
 
     # 4. Kendall's Tau (Ordering)
     if events_for_tau:
+        # A. TF-IDF Based (Event Description vs Hypothesis)
         detected_indices = []
         expected_indices = []
         
-        # We use the event descriptions as anchors to check ordering in the generated text
-        lower_pred = prediction.lower()
-        for i, event in enumerate(events_for_tau):
-            desc = event.get('description', '').strip().lower()
-            if not desc: continue
-            
-            # Find the first occurrence of the event description
-            idx = lower_pred.find(desc)
-            if idx != -1:
-                detected_indices.append(idx)
-                expected_indices.append(i)
-        
-        if len(detected_indices) > 1:
-            tau, _ = kendalltau(detected_indices, expected_indices)
-            results['kendalls_tau'] = tau
-        else:
-            # If we can't find enough events to compare, we return NaN or 0
+        # Split prediction into sentences for granular matching
+        sentences = nltk.sent_tokenize(prediction)
+        if not sentences:
             results['kendalls_tau'] = 0.0
+        else:
+            # Prepare TF-IDF Vectorizer
+            vectorizer = TfidfVectorizer().fit(sentences + [e.get('description', '') for e in events_for_tau])
+            sent_vectors = vectorizer.transform(sentences)
+
+            for i, event in enumerate(events_for_tau):
+                desc = event.get('description', '').strip()
+                if not desc: continue
+                
+                # Vectorize description and find best matching sentence
+                desc_vector = vectorizer.transform([desc])
+                similarities = cosine_similarity(desc_vector, sent_vectors).flatten()
+                
+                best_idx = np.argmax(similarities)
+                best_score = similarities[best_idx]
+                
+                # Threshold to consider it a match (e.g., 0.15 cosine similarity)
+                if best_score > 0.15:
+                    detected_indices.append(best_idx)
+                    expected_indices.append(i)
+            
+            if len(detected_indices) > 1:
+                tau, _ = kendalltau(detected_indices, expected_indices)
+                results['kendalls_tau'] = tau
+            else:
+                results['kendalls_tau'] = 0.0
+        
+        # B. Reference Based (Hypothesis vs Golden Sample Order) - "Legacy" Method
+        results['kendalls_tau_ref'] = calculate_kendall_tau_ref(prediction, reference, events_for_tau)
             
     return results
 
@@ -433,9 +524,9 @@ if __name__ == "__main__":
             metrics = {"Model": model_cfg['name'], "Output File": out_filename}
             if golden_text:
                 print(f"Computing metrics for {model_cfg['name']}...")
-                scores = evaluate_narrative(final_text, golden_text)
+                # Calculate actual Kendall's Tau instead of hardcoding 1.0
+                scores = evaluate_narrative(final_text, golden_text, events_for_tau=events)
                 metrics.update(scores)
-                metrics["kendalls_tau"] = 1.0 # Structural Guarantee for TAEG
                 print(f"Scores {model_cfg['name']}: {scores}")
             
             all_metrics.append(metrics)
