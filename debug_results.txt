@@ -1,0 +1,8 @@
+====================================================================================================
+File                                          | Robust Score | Matches  | Recall  
+----------------------------------------------------------------------------------------------------
+Consolidated_Narrative_Gemma-3-4B.txt         | FILE NOT FOUND
+Consolidated_Narrative_Gemma-3-4B_NoTAEG.txt  | FILE NOT FOUND
+Consolidated_Narrative_BART.txt               | 0.1856       | 142/169  | 84.02%
+Consolidated_Narrative_BART_NoTAEG.txt        | FILE NOT FOUND
+====================================================================================================

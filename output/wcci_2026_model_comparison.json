@@ -8,9 +8,8 @@
         "rougeLsum":0.7586068319,
         "meteor":0.4550967917,
         "bertscore_f1":0.8880270123,
-        "kendalls_tau":0.4518316181,
-        "kendalls_tau_semantic":0.5052265575,
-        "kendalls_tau_ref":0.5776389647
+        "kendalls_tau":0.1891566265,
+        "kendalls_tau_recall":0.8493975904
     },
     {
         "Model":"PEGASUS",
@@ -21,9 +20,8 @@
         "rougeLsum":0.6186255993,
         "meteor":0.5023292762,
         "bertscore_f1":0.8872189522,
-        "kendalls_tau":0.4347961034,
-        "kendalls_tau_semantic":0.465908124,
-        "kendalls_tau_ref":0.5707908114
+        "kendalls_tau":0.0884918986,
+        "kendalls_tau_recall":0.8795180723
     },
     {
         "Model":"PRIMERA",
@@ -34,22 +32,32 @@
         "rougeLsum":0.7847045475,
         "meteor":0.5271944691,
         "bertscore_f1":0.8963639736,
-        "kendalls_tau":0.4632920153,
-        "kendalls_tau_semantic":0.4827394925,
-        "kendalls_tau_ref":0.6240964986
+        "kendalls_tau":0.1211906449,
+        "kendalls_tau_recall":0.8253012048
     },
     {
         "Model":"Gemma-3-4B",
         "Output File":"Consolidated_Narrative_Gemma-3-4B.txt",
-        "rouge1":0.8258874532,
-        "rouge2":0.6664789843,
-        "rougeL":0.6751682009,
-        "rougeLsum":0.6403175407,
-        "meteor":0.4852984391,
-        "bertscore_f1":0.8992317915,
-        "kendalls_tau":0.4583217101,
-        "kendalls_tau_semantic":0.4605623146,
-        "kendalls_tau_ref":0.7718818453
+        "rouge1":0.858919345,
+        "rouge2":0.7092687199,
+        "rougeL":0.7177511166,
+        "rougeLsum":0.6770003211,
+        "meteor":0.4863488523,
+        "bertscore_f1":0.9005439878,
+        "kendalls_tau":0.2321459752,
+        "kendalls_tau_recall":0.8373493976
+    },
+    {
+        "Model":"TAEG-Extractive",
+        "Output File":"Consolidated_Narrative_TAEG-Extractive.txt",
+        "rouge1":0.9322974473,
+        "rouge2":0.8532648337,
+        "rougeL":0.8511812272,
+        "rougeLsum":0.7982876169,
+        "meteor":0.5335928578,
+        "bertscore_f1":0.9330472946,
+        "kendalls_tau":0.1487357882,
+        "kendalls_tau_recall":0.8614457831
     },
     {
         "Model":"BART (No TAEG)",
@@ -60,9 +68,8 @@
         "rougeLsum":0.0049543834,
         "meteor":0.0020309138,
         "bertscore_f1":0.8201671839,
-        "kendalls_tau":0.064692142,
-        "kendalls_tau_semantic":-0.0306540602,
-        "kendalls_tau_ref":0.534083375
+        "kendalls_tau":-0.0120481928,
+        "kendalls_tau_recall":0.0120481928
     },
     {
         "Model":"PEGASUS (No TAEG)",
@@ -73,9 +80,8 @@
         "rougeLsum":0.0118520292,
         "meteor":0.0048873094,
         "bertscore_f1":0.78205055,
-        "kendalls_tau":-0.1681480501,
-        "kendalls_tau_semantic":-0.0528885885,
-        "kendalls_tau_ref":0.3870464727
+        "kendalls_tau":0.0,
+        "kendalls_tau_recall":0.0
     },
     {
         "Model":"PRIMERA (No TAEG)",
@@ -86,21 +92,7 @@
         "rougeLsum":0.0179640719,
         "meteor":0.0067794572,
         "bertscore_f1":0.8504265547,
-        "kendalls_tau":-0.3122553023,
-        "kendalls_tau_semantic":0.0174504619,
-        "kendalls_tau_ref":0.3807533348
-    },
-    {
-        "Model":"Gemma-3-4B (No TAEG)",
-        "Output File":"Consolidated_Narrative_Gemma-3-4B_NoTAEG.txt",
-        "rouge1":0.0306868867,
-        "rouge2":0.0140367573,
-        "rougeL":0.0221231044,
-        "rougeLsum":0.0230746357,
-        "meteor":0.009709382,
-        "bertscore_f1":0.840896368,
-        "kendalls_tau":0.1054795811,
-        "kendalls_tau_semantic":0.1329952341,
-        "kendalls_tau_ref":0.4551772932
+        "kendalls_tau":0.0060240964,
+        "kendalls_tau_recall":0.0301204819
     }
 ]

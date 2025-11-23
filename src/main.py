@@ -11,10 +11,12 @@ from typing import List, Dict, Tuple
 from tqdm import tqdm
 import evaluate
 import nltk
-from scipy.stats import kendalltau
+from scipy.stats import kendalltau, ttest_rel, wilcoxon
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer, util
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM
+import random
 
 # Ensure NLTK data is available
 try:
@@ -51,7 +53,10 @@ MODELS_TO_RUN = [
     # {"name": "Gemini-Flash", "path": "gemini-1.5-flash", "type": "google_genai"},
     
     # NEW: Gemma 3 (4B Instruct)
-    {"name": "Gemma-3-4B", "path": "google/gemma-3-4b-it", "type": "local_causal_lm"}
+    {"name": "Gemma-3-4B", "path": "google/gemma-3-4b-it", "type": "local_causal_lm"},
+    
+    # NEW: TAEG Extractive Baseline (LexRank)
+    {"name": "TAEG-Extractive", "path": "lexrank", "type": "lexrank"}
 ]
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -337,6 +342,39 @@ class GoogleGenAIConsolidator(ConsolidatorInterface):
             print(f"Google GenAI Error: {e}")
             return texts[0]
 
+class ExtractiveLexRankConsolidator(ConsolidatorInterface):
+    """
+    Selects the most representative text from the parallel sources using TF-IDF LexRank (Degree Centrality).
+    This serves as a strong extractive baseline (TAEG-Extractive).
+    """
+    def __init__(self, model_name: str = "lexrank"):
+        self.model_name = model_name
+        print(f"[{model_name}] Initialized Extractive LexRank Consolidator.")
+
+    def consolidate_event(self, texts: List[str]) -> str:
+        if not texts: return ""
+        if len(texts) == 1: return texts[0]
+
+        try:
+            # 1. TF-IDF Vectorization
+            vectorizer = TfidfVectorizer()
+            tfidf_matrix = vectorizer.fit_transform(texts)
+
+            # 2. Cosine Similarity Matrix
+            cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
+
+            # 3. Degree Centrality (Sum of similarities)
+            # We sum the rows to get the total similarity of each text to all others
+            scores = cosine_sim.sum(axis=1)
+
+            # 4. Select text with highest score
+            best_idx = np.argmax(scores)
+            return texts[best_idx]
+
+        except Exception as e:
+            print(f"LexRank Error: {e}. Returning first text.")
+            return texts[0]
+
 # --- FACTORY & EXECUTION ---
 
 def get_consolidator(config: Dict) -> ConsolidatorInterface:
@@ -346,67 +384,79 @@ def get_consolidator(config: Dict) -> ConsolidatorInterface:
         return GoogleGenAIConsolidator(config['path'])
     elif config['type'] == 'local_causal_lm':
         return LocalGemmaConsolidator(config['path'])
+    elif config['type'] == 'lexrank':
+        return ExtractiveLexRankConsolidator()
     else:
         return HuggingFaceConsolidator(config['path'])
 
-def calculate_kendall_tau_ref(hypothesis, reference, event_data):
-    """
-    Calculates Kendall's Tau by comparing event order in Hypothesis vs Reference (Golden Sample).
-    Uses a 'First Match' heuristic with keyword overlap (first 3 words of description).
-    """
-    try:
-        # Split texts into sentences
-        ref_sentences = nltk.sent_tokenize(reference.lower())
-        hyp_sentences = nltk.sent_tokenize(hypothesis.lower())
+class RobustKendallTau:
+    def __init__(self, model_name='all-MiniLM-L6-v2'):
+        print(f"Loading SentenceTransformer: {model_name}...")
+        self.model = SentenceTransformer(model_name)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model.to(self.device)
 
-        if len(hyp_sentences) < 2:
-            return 0.0
-
-        # 1. Find events in Reference (Golden Sample) -> Expected Order
-        ref_event_positions = {}
-        for event in event_data:
-            event_id = event['id']
-            desc_lower = event.get('description', '').lower()
-            keywords = desc_lower.split()[:3] # Heuristic
-            if not keywords: continue
-            
-            for j, sentence in enumerate(ref_sentences):
-                if any(keyword in sentence for keyword in keywords):
-                    ref_event_positions[event_id] = j
-                    break
-
-        # 2. Find events in Hypothesis (Generated Text) -> Found Order
-        hyp_event_positions = {}
-        for event in event_data:
-            event_id = event['id']
-            desc_lower = event.get('description', '').lower()
-            keywords = desc_lower.split()[:3]
-            if not keywords: continue
-
-            for j, sentence in enumerate(hyp_sentences):
-                if any(keyword in sentence for keyword in keywords):
-                    hyp_event_positions[event_id] = j
-                    break
-
-        # 3. Intersection
-        common_events = set(ref_event_positions.keys()) & set(hyp_event_positions.keys())
+    def calculate(self, hypothesis_text, events, threshold=0.35):
+        """
+        Calculates Robust Kendall's Tau using semantic matching.
+        Threshold lowered to 0.35 based on empirical analysis of MiniLM-L6-v2.
+        """
+        # 1. Pre-calculate Embeddings
+        event_descriptions = [e['description'] for e in events]
+        event_ids = [e['id'] for e in events]
         
-        if len(common_events) < 2:
-            return 0.0
+        sentences = nltk.sent_tokenize(hypothesis_text)
+        if not sentences:
+            return 0.0, 0, 0
 
-        # 4. Calculate Tau
-        common_event_list = sorted(common_events)
-        expected_order = [ref_event_positions[eid] for eid in common_event_list]
-        found_order = [hyp_event_positions[eid] for eid in common_event_list]
+        # Encode
+        desc_embeddings = self.model.encode(event_descriptions, convert_to_tensor=True, show_progress_bar=False)
+        sent_embeddings = self.model.encode(sentences, convert_to_tensor=True, show_progress_bar=False)
 
-        tau, _ = kendalltau(expected_order, found_order)
-        return tau if not np.isnan(tau) else 0.0
+        # 2. Compute Cosine Similarity Matrix
+        # Shape: (num_events, num_sentences)
+        cosine_scores = util.cos_sim(desc_embeddings, sent_embeddings)
 
-    except Exception as e:
-        print(f"Error in legacy tau: {e}")
-        return 0.0
+        # 3. Find Matches
+        matched_events_in_order = []
+        matched_indices = set()
+        
+        # Iterate through sentences in order
+        for sent_idx in range(len(sentences)):
+            # Find best matching event for this sentence
+            scores = cosine_scores[:, sent_idx]
+            max_score, max_idx = torch.max(scores, dim=0)
+            
+            if max_score.item() >= threshold:
+                event_id = event_ids[max_idx.item()]
+                # Only add if not already matched (or allow repeats? Standard Tau usually assumes unique ranks)
+                # For narrative flow, we want the *first* time an event appears.
+                if event_id not in matched_indices:
+                    matched_events_in_order.append(event_id)
+                    matched_indices.add(event_id)
 
-def evaluate_narrative(prediction: str, reference: str, events_for_tau: List[Dict] = None) -> Dict[str, float]:
+        # 4. Calculate Kendall's Tau
+        if len(matched_events_in_order) < 2:
+            return 0.0, len(matched_events_in_order), len(events)
+
+        try:
+            found_ranks = [int(eid) for eid in matched_events_in_order]
+            expected_ranks = sorted(found_ranks)
+            
+            tau, _ = kendalltau(found_ranks, expected_ranks)
+            if np.isnan(tau): tau = 0.0
+            
+            # 5. Apply Penalty for Missing Events (Recall)
+            recall = len(matched_indices) / len(events)
+            penalized_score = tau * recall
+            
+            return penalized_score, len(matched_indices), len(events)
+
+        except Exception as e:
+            print(f"Error calculating tau: {e}")
+            return 0.0, 0, len(events)
+
+def evaluate_narrative(prediction: str, reference: str, events_for_tau: List[Dict] = None, robust_metric: RobustKendallTau = None) -> Dict[str, float]:
     """
     Computes ROUGE, METEOR, BERTScore, and optionally Kendall's Tau.
     """
@@ -437,44 +487,12 @@ def evaluate_narrative(prediction: str, reference: str, events_for_tau: List[Dic
         print(f"[EVAL ERROR] BERTScore: {e}")
 
     # 4. Kendall's Tau (Ordering)
-    if events_for_tau:
-        # A. TF-IDF Based (Event Description vs Hypothesis)
-        detected_indices = []
-        expected_indices = []
-        
-        # Split prediction into sentences for granular matching
-        sentences = nltk.sent_tokenize(prediction)
-        if not sentences:
-            results['kendalls_tau'] = 0.0
-        else:
-            # Prepare TF-IDF Vectorizer
-            vectorizer = TfidfVectorizer().fit(sentences + [e.get('description', '') for e in events_for_tau])
-            sent_vectors = vectorizer.transform(sentences)
-
-            for i, event in enumerate(events_for_tau):
-                desc = event.get('description', '').strip()
-                if not desc: continue
-                
-                # Vectorize description and find best matching sentence
-                desc_vector = vectorizer.transform([desc])
-                similarities = cosine_similarity(desc_vector, sent_vectors).flatten()
-                
-                best_idx = np.argmax(similarities)
-                best_score = similarities[best_idx]
-                
-                # Threshold to consider it a match (e.g., 0.15 cosine similarity)
-                if best_score > 0.15:
-                    detected_indices.append(best_idx)
-                    expected_indices.append(i)
-            
-            if len(detected_indices) > 1:
-                tau, _ = kendalltau(detected_indices, expected_indices)
-                results['kendalls_tau'] = tau
-            else:
-                results['kendalls_tau'] = 0.0
-        
-        # B. Reference Based (Hypothesis vs Golden Sample Order) - "Legacy" Method
-        results['kendalls_tau_ref'] = calculate_kendall_tau_ref(prediction, reference, events_for_tau)
+    if events_for_tau and robust_metric:
+        # Robust Semantic Kendall's Tau (Single Metric)
+        # Using a lower threshold (0.35) based on empirical observation of MiniLM-L6-v2 on this dataset
+        score, matches, total = robust_metric.calculate(prediction, events_for_tau, threshold=0.35)
+        results['kendalls_tau'] = score
+        results['kendalls_tau_recall'] = matches / total if total > 0 else 0.0
             
     return results
 
@@ -485,17 +503,17 @@ if __name__ == "__main__":
     chrono_parser = ChronologyParser(chrono_path, bible_parser)
     events = chrono_parser.get_events()
     print(f"[SUCCESS] {len(events)} events extracted.")
+    
+    all_metrics = []
 
-    # --- FULL RUN ---
-    # events = events[:5] # Uncomment for debug
-    # --------------------------------
+    # Initialize Robust Metric
+    print("Initializing Robust Kendall's Tau Metric...")
+    robust_metric = RobustKendallTau()
 
     golden_path = os.path.join(DATA_DIR, FILES_CONFIG["golden"])
     golden_text = ""
     if os.path.exists(golden_path):
         with open(golden_path, 'r', encoding='utf-8') as f: golden_text = f.read()
-    
-    all_metrics = []
 
     # 2. Run Experiment for each Model
     for model_cfg in MODELS_TO_RUN:
@@ -504,28 +522,33 @@ if __name__ == "__main__":
             consolidator = get_consolidator(model_cfg)
             full_narrative = []
             
-            for event in tqdm(events, desc=f"Generating {model_cfg['name']}"):
-                try:
-                    text = consolidator.consolidate_event(event['texts'])
-                    full_narrative.append(text)
-                except Exception as e:
-                    print(f"Error event {event['id']}: {e}")
-                    full_narrative.append(event['texts'][0]) 
-            
-            final_text = "\n\n".join(full_narrative)
-            
-            # Save Text
             out_filename = f"Consolidated_Narrative_{model_cfg['name']}.txt"
             out_path = os.path.join(OUTPUT_DIR, out_filename)
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(final_text)
+            
+            if os.path.exists(out_path):
+                print(f"File {out_filename} exists. Skipping generation, reading from disk...")
+                with open(out_path, "r", encoding="utf-8") as f:
+                    final_text = f.read()
+            else:
+                for event in tqdm(events, desc=f"Generating {model_cfg['name']}"):
+                    try:
+                        text = consolidator.consolidate_event(event['texts'])
+                        full_narrative.append(text)
+                    except Exception as e:
+                        print(f"Error event {event['id']}: {e}")
+                        full_narrative.append(event['texts'][0]) 
+                
+                final_text = "\n\n".join(full_narrative)
+                
+                # Save Text
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(final_text)
             
             # Calculate Metrics
             metrics = {"Model": model_cfg['name'], "Output File": out_filename}
             if golden_text:
                 print(f"Computing metrics for {model_cfg['name']}...")
-                # Calculate actual Kendall's Tau instead of hardcoding 1.0
-                scores = evaluate_narrative(final_text, golden_text, events_for_tau=events)
+                scores = evaluate_narrative(final_text, golden_text, events_for_tau=events, robust_metric=robust_metric)
                 metrics.update(scores)
                 print(f"Scores {model_cfg['name']}: {scores}")
             
@@ -535,7 +558,7 @@ if __name__ == "__main__":
             if torch.cuda.is_available(): torch.cuda.empty_cache()
             
         except Exception as e:
-            print(f"Failed to run {model_cfg['name']}: {e}")
+            print(f"Failed to run {model_cfg['name']} (No TAEG): {e}")
 
     # --- NEW: Global Consolidation (No TAEG) ---
     print("\n--- Running Baseline: Global Consolidation (No TAEG) ---")
@@ -543,27 +566,35 @@ if __name__ == "__main__":
     full_gospels = [bible_parser.get_full_book_text(g) for g in gospel_names]
     
     for model_cfg in MODELS_TO_RUN:
+        # Skip Extractive Baseline for NoTAEG (doesn't make sense, it's just the gospels)
+        if model_cfg['type'] == 'lexrank': continue
+        
         print(f"\n--- Running Model (No TAEG): {model_cfg['name']} ---")
         try:
             consolidator = get_consolidator(model_cfg)
             
-            # Warn about context window
-            print(f"Input length (words): {[len(t.split()) for t in full_gospels]}")
-            print("Warning: This will likely exceed model context windows and result in truncation.")
-            
-            consolidated_text = consolidator.consolidate_event(full_gospels)
-            
             out_filename = f"Consolidated_Narrative_{model_cfg['name']}_NoTAEG.txt"
             out_path = os.path.join(OUTPUT_DIR, out_filename)
-            with open(out_path, "w", encoding="utf-8") as f:
-                f.write(consolidated_text)
+            
+            if os.path.exists(out_path):
+                print(f"File {out_filename} exists. Skipping generation, reading from disk...")
+                with open(out_path, "r", encoding="utf-8") as f:
+                    consolidated_text = f.read()
+            else:
+                # Warn about context window
+                print(f"Input length (words): {[len(t.split()) for t in full_gospels]}")
+                print("Warning: This will likely exceed model context windows and result in truncation.")
+                
+                consolidated_text = consolidator.consolidate_event(full_gospels)
+                
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(consolidated_text)
                 
             # Metrics
             metrics = {"Model": f"{model_cfg['name']} (No TAEG)", "Output File": out_filename}
             if golden_text:
                 print(f"Computing metrics for {model_cfg['name']} (No TAEG)...")
-                # Pass 'events' to calculate Kendall's Tau based on event description ordering
-                scores = evaluate_narrative(consolidated_text, golden_text, events_for_tau=events)
+                scores = evaluate_narrative(consolidated_text, golden_text, events_for_tau=events, robust_metric=robust_metric)
                 metrics.update(scores)
                 print(f"Scores {model_cfg['name']} (No TAEG): {scores}")
             
