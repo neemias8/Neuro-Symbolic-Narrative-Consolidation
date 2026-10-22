@@ -1,8 +1,15 @@
 # Neuro-Symbolic Narrative Consolidation (WCCI 2026)
-This repository contains the experimental implementation for the paper submitted to WCCI 2026. It addresses the challenge of processing overlapping narrative documents—such as legal testimonies, historical chronicles, or the Gospels—where the goal is not merely to summarize, but to unify multiple perspectives into a single, coherent story.
+This repository contains the experimental implementation for the paper submitted to WCCI 2026. It addresses the challenge of processing overlapping narrative documents—such as legal testimonies, [...]
+
+## Published Paper
+
+This work was published at the **2026 International Joint Conference on Neural Networks (IJCNN 2026)**, held as part of **WCCI 2026 in Maastricht, the Netherlands**.
+
+- **IEEE Xplore:** [View the published paper](https://ieeexplore.ieee.org/document/11729849)
+- **DOI:** [10.1109/IJCNN69854.2026.11729849](https://doi.org/10.1109/IJCNN69854.2026.11729849)
 
 # Narrative Consolidation vs. Multi-Document Summarization (MDS)
-While standard **Multi-Document Summarization (MDS)** aims for compression (producing a concise text that captures the most salient information), this approach often fails when applied to complex narratives. By prioritizing brevity, standard MDS models frequently sacrifice chronological integrity and omit complementary details that are essential for a complete understanding of "what happened when."
+While standard **Multi-Document Summarization (MDS)** aims for compression (producing a concise text that captures the most salient information), this approach often fails when applied to complex narrative documents.
 
 **Narrative Consolidation**, formally defined in this work, shifts the objective from compression to **unification**. Its core goals are:
 
